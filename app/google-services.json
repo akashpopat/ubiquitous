@@ -1,0 +1,42 @@
+{
+  "project_info": {
+    "project_number": "1049037185698",
+    "firebase_url": "https://ubiq-57ab9.firebaseio.com",
+    "project_id": "ubiq-57ab9",
+    "storage_bucket": "ubiq-57ab9.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1049037185698:android:83b792e26f07bf18",
+        "android_client_info": {
+          "package_name": "com.example.android.sunshine.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1049037185698-9jk4vfkaq0cc6vl0j6amfmjd8k7nboej.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCU3ryMR6lg-srrN6knEUKm-2mJEgVX1u4"
+        }
+      ],
+      "services": {
+        "analytics_service": {
+          "status": 1
+        },
+        "appinvite_service": {
+          "status": 1,
+          "other_platform_oauth_client": []
+        },
+        "ads_service": {
+          "status": 2
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
