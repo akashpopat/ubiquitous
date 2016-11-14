@@ -22,12 +22,17 @@ import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.support.annotation.IntDef;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.TaskStackBuilder;
 import android.text.format.Time;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.bumptech.glide.Glide;
 import com.example.android.sunshine.app.BuildConfig;
@@ -35,13 +40,21 @@ import com.example.android.sunshine.app.MainActivity;
 import com.example.android.sunshine.app.R;
 import com.example.android.sunshine.app.Utility;
 import com.example.android.sunshine.app.data.WeatherContract;
-import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.PendingResult;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.Asset;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -52,7 +65,7 @@ import java.net.URL;
 import java.util.Vector;
 import java.util.concurrent.ExecutionException;
 
-public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
+public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements GoogleApiClient.ConnectionCallbacks {
     public final String LOG_TAG = SunshineSyncAdapter.class.getSimpleName();
     public static final String ACTION_DATA_UPDATED =
             "com.example.android.sunshine.app.ACTION_DATA_UPDATED";
@@ -77,6 +90,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     private static final int INDEX_MIN_TEMP = 2;
     private static final int INDEX_SHORT_DESC = 3;
 
+
+
+
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({LOCATION_STATUS_OK, LOCATION_STATUS_SERVER_DOWN, LOCATION_STATUS_SERVER_INVALID,  LOCATION_STATUS_UNKNOWN, LOCATION_STATUS_INVALID})
     public @interface LocationStatus {}
@@ -86,10 +102,25 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     public static final int LOCATION_STATUS_SERVER_INVALID = 2;
     public static final int LOCATION_STATUS_UNKNOWN = 3;
     public static final int LOCATION_STATUS_INVALID = 4;
+    private Context context;
+
+    private GoogleApiClient mGoogleApiClient;
+    private static final String PATH="/wearable";
+    private static final String KEY_HIGH="key_high";
+    private static final String KEY_LOW="key_low";
+    private static final String KEY_ASSET="key_asset";
 
     public SunshineSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
+        this.context=context;
+        mGoogleApiClient=new GoogleApiClient.Builder(context)
+                .addApi(Wearable.API)
+                .build();
+
+        mGoogleApiClient.connect();
+
     }
+
 
     @Override
     public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider, SyncResult syncResult) {
@@ -118,14 +149,14 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             final String FORMAT_PARAM = "mode";
             final String UNITS_PARAM = "units";
             final String DAYS_PARAM = "cnt";
-            final String APPID_PARAM = "APPID";
-
+            final String API_ID="APPID";
+            String api_key=BuildConfig.OPEN_WEATHER_MAP_API_KEY;
             Uri builtUri = Uri.parse(FORECAST_BASE_URL).buildUpon()
                     .appendQueryParameter(QUERY_PARAM, locationQuery)
                     .appendQueryParameter(FORMAT_PARAM, format)
                     .appendQueryParameter(UNITS_PARAM, units)
                     .appendQueryParameter(DAYS_PARAM, Integer.toString(numDays))
-                    .appendQueryParameter(APPID_PARAM, BuildConfig.OPEN_WEATHER_MAP_API_KEY)
+                    .appendQueryParameter(API_ID,api_key)
                     .build();
 
             URL url = new URL(builtUri.toString());
@@ -315,7 +346,10 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 JSONObject temperatureObject = dayForecast.getJSONObject(OWM_TEMPERATURE);
                 high = temperatureObject.getDouble(OWM_MAX);
                 low = temperatureObject.getDouble(OWM_MIN);
+                if(i==0) {
+                    sendDataToWearable(high, low, weatherId);
 
+                }
                 ContentValues weatherValues = new ContentValues();
 
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_LOC_KEY, locationId);
@@ -345,7 +379,6 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                         new String[] {Long.toString(dayTime.setJulianDay(julianStartDay-1))});
 
                 updateWidgets();
-                updateMuzei();
                 notifyWeather();
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
@@ -358,22 +391,67 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
+
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+
+    }
+    private Asset createAssetFromBitmap(Bitmap bitmap){
+        ByteArrayOutputStream byteArrayOutputStream=new ByteArrayOutputStream();
+        //  Bitmap bitmap1=bitmap.copy(Bitmap.Config.ARGB_8888,true);
+        //set PNG the image otherwise shows a black background
+        bitmap.compress(Bitmap.CompressFormat.PNG,100,byteArrayOutputStream);
+
+        return Asset.createFromBytes(byteArrayOutputStream.toByteArray());
+
+    }
+    private void sendDataToWearable(final double high,final double low,int weatherId) {
+        Handler handler=new Handler(Looper.getMainLooper());
+
+        PutDataMapRequest updateCounterDataMapRequest = PutDataMapRequest.create(PATH);
+        updateCounterDataMapRequest.getDataMap().putDouble(KEY_HIGH, high);
+        updateCounterDataMapRequest.getDataMap().putDouble(KEY_LOW,low);
+        int id=Utility.getArtResourceForWeatherCondition(weatherId);
+        Bitmap bitmap=BitmapFactory.decodeResource(getContext().getResources(),id);
+
+        Asset asset=createAssetFromBitmap(bitmap);
+        updateCounterDataMapRequest.getDataMap().putAsset(KEY_ASSET,asset);
+        updateCounterDataMapRequest.getDataMap().putLong("timestamp",System.currentTimeMillis());
+
+        Log.d("VILLANUEVA","temperature high:"+high);
+        Log.d("VILLANUEVA","temperature low:"+low);
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(context,"high:"+high+",low"+low, Toast.LENGTH_SHORT).show();
+            }
+        });
+        PutDataRequest putDataRequest = updateCounterDataMapRequest.asPutDataRequest();
+        putDataRequest.setUrgent();
+        PendingResult<DataApi.DataItemResult> pendingResult =
+                Wearable.DataApi.putDataItem(mGoogleApiClient, putDataRequest);
+        pendingResult.setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+            @Override
+            public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                if(dataItemResult.getStatus().isSuccess()) {
+                    Log.d("VILLANUEVA", "onresult success");
+                } else {
+                    Log.d("VILLANUEVA", "onresult failed");
+                }
+            }
+        });
+
+    }
     private void updateWidgets() {
         Context context = getContext();
         // Setting the package ensures that only components in our app will receive the broadcast
         Intent dataUpdatedIntent = new Intent(ACTION_DATA_UPDATED)
                 .setPackage(context.getPackageName());
         context.sendBroadcast(dataUpdatedIntent);
-    }
-
-    private void updateMuzei() {
-        // Muzei is only compatible with Jelly Bean MR1+ devices, so there's no need to update the
-        // Muzei background on lower API level devices
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            Context context = getContext();
-            context.startService(new Intent(ACTION_DATA_UPDATED)
-                    .setClass(context, WeatherMuzeiSource.class));
-        }
     }
 
     private void notifyWeather() {
