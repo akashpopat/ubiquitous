@@ -30,6 +30,7 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
@@ -38,20 +39,6 @@ import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
 
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.ResultCallback;
-import com.google.android.gms.wearable.Asset;
-import com.google.android.gms.wearable.DataApi;
-import com.google.android.gms.wearable.DataEvent;
-import com.google.android.gms.wearable.DataEventBuffer;
-import com.google.android.gms.wearable.DataItem;
-import com.google.android.gms.wearable.DataMap;
-import com.google.android.gms.wearable.DataMapItem;
-import com.google.android.gms.wearable.Wearable;
-
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.TimeZone;
@@ -64,6 +51,11 @@ import java.util.concurrent.TimeUnit;
 public class MyWatchFace extends CanvasWatchFaceService {
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
+    private static final String TAG = "MyWatchFace";
+
+    public static double mHigh = 0.0d;
+    public static double mLow = 0.0d;
+    public static String mArtId;
 
     /**
      * Update rate in milliseconds for interactive mode. We update once a second since seconds are
@@ -81,34 +73,9 @@ public class MyWatchFace extends CanvasWatchFaceService {
         return new Engine();
     }
 
-    private static class EngineHandler extends Handler {
-        private final WeakReference<MyWatchFace.Engine> mWeakReference;
+    private class Engine extends CanvasWatchFaceService.Engine{
 
-        public EngineHandler(MyWatchFace.Engine reference) {
-            mWeakReference = new WeakReference<>(reference);
-        }
 
-        @Override
-        public void handleMessage(Message msg) {
-            MyWatchFace.Engine engine = mWeakReference.get();
-            if (engine != null) {
-                switch (msg.what) {
-                    case MSG_UPDATE_TIME:
-                        engine.handleUpdateTimeMessage();
-                        break;
-                }
-            }
-        }
-    }
-
-    private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
-            GoogleApiClient.ConnectionCallbacks,GoogleApiClient.OnConnectionFailedListener {
-        private static final String KEY_HIGH="key_high";
-        private static final String KEY_LOW="key_low";
-        private static final String PATH="/wearable";
-        private static final String KEY_ASSET="key_asset";
-
-        final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
         Paint mAmbientBackgroundPaint;
@@ -123,17 +90,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
         boolean mAmbient;
 
 
-        private Double mHigh;
-        private Double mLow;
-        private Bitmap mIcon;
-
         Time mTime;
-
-        GoogleApiClient mGoogleApiClient = new GoogleApiClient.Builder(MyWatchFace.this)
-                .addConnectionCallbacks(this)
-                .addOnConnectionFailedListener(this)
-                .addApi(Wearable.API)
-                .build();
 
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
             @Override
@@ -142,6 +99,25 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 mTime.setToNow();
             }
         };
+        /* Handler to update the time once a second in interactive mode. */
+        private final Handler mUpdateTimeHandler = new Handler() {
+            @Override
+            public void handleMessage(Message message) {
+
+                if (Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "updating time");
+                }
+                invalidate();
+                if (shouldTimerBeRunning()) {
+                    long timeMs = System.currentTimeMillis();
+                    long delayMs = INTERACTIVE_UPDATE_RATE_MS
+                            - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
+                    mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
+                }
+
+            }
+        };
+
         int mTapCount;
 
         float mXOffset;
@@ -166,6 +142,10 @@ public class MyWatchFace extends CanvasWatchFaceService {
                     .setShowSystemUiTime(false)
                     .setAcceptsTapEvents(true)
                     .build());
+            LocalBroadcastManager.getInstance(MyWatchFace.this)
+                    .registerReceiver(new MyWatchFace.MessageReceiver(), new IntentFilter(Intent.ACTION_SEND));
+
+
             Resources resources = MyWatchFace.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
             //interactive backround
@@ -212,13 +192,6 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
         }
 
-
-        @Override
-        public void onDestroy() {
-            mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
-            super.onDestroy();
-        }
-
         private Paint createTextPaint(int textColor) {
             Paint paint = new Paint();
             paint.setColor(textColor);
@@ -234,8 +207,6 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
             if (visible) {
 
-                mGoogleApiClient.connect();
-                //wake up device register broadcast receiver
                 registerReceiver();
 
                 // Update time zone in case it changed while we weren't visible.
@@ -245,10 +216,6 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
                 //invisible device, unregister broadcast receiver
                 unregisterReceiver();
-                if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
-                    Wearable.DataApi.removeListener(mGoogleApiClient, this);
-                    mGoogleApiClient.disconnect();
-                }
             }
 
             // Whether the timer should be running depends on whether we're visible (as well as
@@ -365,8 +332,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
-            String time = mAmbient
-                    ? String.format("%d:%02d", mTime.hour, mTime.minute)
+            String time = mAmbient ? String.format("%d:%02d", mTime.hour, mTime.minute)
                     : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
 
 
@@ -375,12 +341,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
             canvas.drawText(date, mXOffset + resources.getDimension(R.dimen.extra_x_offset_date),
                     mYOffset + resources.getDimension(R.dimen.extra_y_offset_date),
                     isInAmbientMode() ? mAmbientDatePaint : mDatePaint);
-            if (mHigh == null) {
-                mHigh = 0.0d;
-            }
-            if (mLow == null) {
-                mLow=0.0d;
-            }
+
 
             canvas.drawText(String.format(getString(R.string.format_temperature),mHigh),
                     mXOffset + resources.getDimension(R.dimen.extra_x_offset_high),
@@ -391,9 +352,45 @@ public class MyWatchFace extends CanvasWatchFaceService {
                     mXOffset + resources.getDimension(R.dimen.extra_x_offset_low),
                     mYOffset + resources.getDimension(R.dimen.extra_y_offset_low), isInAmbientMode() ? mAmbientLowPaint: mLowPaint);
 
-            if (mIcon!=null && !isInAmbientMode()) {
-                canvas.drawBitmap(mIcon, mXOffset + resources.getDimension(R.dimen.extra_x_offset_icon),
-                        mYOffset + resources.getDimension(R.dimen.extra_y_offset_icon), mIconPaint);
+
+            if (mArtId!=null && !isInAmbientMode()) {
+
+                try {
+                    Bitmap artBitmap = null;
+                    switch (mArtId) {
+                        case "storm":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_storm);
+                            break;
+                        case "light_rain":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_light_rain);
+                            break;
+                        case "rain":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_rain);
+                            break;
+                        case "snow":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_snow);
+                            break;
+                        case "fog":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_fog);
+                            break;
+                        case "clear":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_clear);
+                            break;
+                        case "light_clouds":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_light_clouds);
+                            break;
+                        case "clouds":
+                            artBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_clouds);
+                            break;
+                    }
+                    Log.d("Before creating bitmap", mArtId);
+                    artBitmap = Bitmap.createScaledBitmap(artBitmap, 90, 75, true);
+                    canvas.drawBitmap(artBitmap, mXOffset + resources.getDimension(R.dimen.extra_x_offset_icon),
+                            mYOffset + resources.getDimension(R.dimen.extra_y_offset_icon), mIconPaint);
+                    Log.d("Bitmap", "Should be created");
+                } catch (NullPointerException npe) {
+                    Log.e("Watchface ArtId", mArtId);
+                }
             }
 
         }
@@ -405,16 +402,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
         }
 
-        /**
-         * Starts the {@link #mUpdateTimeHandler} timer if it should be running and isn't currently
-         * or stops it if it shouldn't be running but currently is.
-         */
-        private void updateTimer() {
-            mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
-            if (shouldTimerBeRunning()) {
-                mUpdateTimeHandler.sendEmptyMessage(MSG_UPDATE_TIME);
-            }
-        }
+
 
         /**
          * Returns whether the {@link #mUpdateTimeHandler} timer should be running. The timer should
@@ -438,70 +426,28 @@ public class MyWatchFace extends CanvasWatchFaceService {
         }
 
 
-        @Override
-        public void onConnected(Bundle bundle) {
-
-            Wearable.DataApi.addListener(mGoogleApiClient, Engine.this);
-        }
-
-        @Override
-        public void onConnectionSuspended(int i) {
-
-        }
-
-        @Override
-        public void onConnectionFailed(ConnectionResult connectionResult) {
-
-        }
-
-        @Override
-        public void onDataChanged(DataEventBuffer dataEventBuffer) {
-
-            for (DataEvent dataEvent : dataEventBuffer) {
-                if (dataEvent.getType() != DataEvent.TYPE_CHANGED) {
-                    continue;
-                }
-
-                DataItem dataItem = dataEvent.getDataItem();
-                if (!dataItem.getUri().getPath().equals(
-                        PATH)) {
-                    continue;
-                }
-
-                DataMapItem dataMapItem = DataMapItem.fromDataItem(dataItem);
-                DataMap config = dataMapItem.getDataMap();
-
-                mHigh = config.getDouble(KEY_HIGH);
-
-
-                mLow = config.getDouble(KEY_LOW);
-
-                Asset asset=config.getAsset(KEY_ASSET);
-                loadBitmapFromAsset(asset);
-
+        private void updateTimer() {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "updateTimer");
+            }
+            mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
+            if (shouldTimerBeRunning()) {
+                mUpdateTimeHandler.sendEmptyMessage(MSG_UPDATE_TIME);
             }
         }
-        public void loadBitmapFromAsset(Asset asset) {
-            if (asset == null) {
-                throw new IllegalArgumentException("Asset must be non-null");
-            }
+    }
 
+    public class MessageReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Bundle bundle = intent.getBundleExtra("test");
 
-            Wearable.DataApi.
-                    getFdForAsset(mGoogleApiClient, asset).setResultCallback(new ResultCallback<DataApi.GetFdForAssetResult>() {
-                @Override
-                public void onResult(DataApi.GetFdForAssetResult getFdForAssetResult) {
-                    InputStream assetInputStream=   getFdForAssetResult.getInputStream();
-                    if (assetInputStream == null) {
-                        Log.w("VILLANUEVA", "Requested an unknown Asset.");
-                        mIcon=null;
-                    }
-                    // decode the stream into a bitmap
-                    Bitmap bitmap= BitmapFactory.decodeStream(assetInputStream);
-                    mIcon=Bitmap.createScaledBitmap(bitmap,50,50,false);
-                }
-            });
-
+            try {
+                mHigh = Double.parseDouble((bundle.getString("high")));
+                mLow = Double.parseDouble(bundle.getString("low"));
+                mArtId = bundle.getString("art");
+                Log.d("Received on Watchface", mHigh + "");
+            }catch (Exception ignored){}
 
         }
     }
