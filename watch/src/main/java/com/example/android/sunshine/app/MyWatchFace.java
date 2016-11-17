@@ -384,7 +384,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
                             break;
                     }
                     Log.d("Before creating bitmap", mArtId);
-                    artBitmap = Bitmap.createScaledBitmap(artBitmap, 90, 75, true);
+                    artBitmap = Bitmap.createScaledBitmap(artBitmap, 70, 55, true);
                     canvas.drawBitmap(artBitmap, mXOffset + resources.getDimension(R.dimen.extra_x_offset_icon),
                             mYOffset + resources.getDimension(R.dimen.extra_y_offset_icon), mIconPaint);
                     Log.d("Bitmap", "Should be created");
@@ -441,13 +441,15 @@ public class MyWatchFace extends CanvasWatchFaceService {
         @Override
         public void onReceive(Context context, Intent intent) {
             Bundle bundle = intent.getBundleExtra("test");
-
             try {
                 mHigh = Double.parseDouble((bundle.getString("high")));
                 mLow = Double.parseDouble(bundle.getString("low"));
                 mArtId = bundle.getString("art");
                 Log.d("Received on Watchface", mHigh + "");
-            }catch (Exception ignored){}
+
+            }catch (Exception e){
+                e.printStackTrace();
+            }
 
         }
     }

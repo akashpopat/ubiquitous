@@ -383,8 +383,8 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements 
 
                 if (i==0) {
 
-                    sendHigh = Integer.toString( (int) Math.round(high)) + "°";
-                    sendLow = Integer.toString((int) Math.round(low)) + "°";
+                    sendHigh = Integer.toString( (int) Math.round(high));
+                    sendLow = Integer.toString((int) Math.round(low));
                     sendArtId = getArt(weatherId);
                 }
 
